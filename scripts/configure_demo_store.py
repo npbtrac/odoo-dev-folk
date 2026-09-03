@@ -1,14 +1,7 @@
-# Configure the Odoo demo ecommerce store for Tamara (run via `odoo-bin shell`).
-# Relies on env vars: TAMARA_API_TOKEN, TAMARA_NOTIFICATION_TOKEN, TAMARA_PUBLIC_KEY.
-import os
-
+# Configure the Odoo demo ecommerce store (run via `odoo-bin shell`).
+# Enables a shop currency switcher for SAR, AED, and USD.
 from odoo import fields
 from odoo.exceptions import UserError
-from odoo.fields import Command
-
-api_token = os.environ.get('TAMARA_API_TOKEN') or ''
-notification_token = os.environ.get('TAMARA_NOTIFICATION_TOKEN') or 'sandbox-notification-token-placeholder'
-public_key = os.environ.get('TAMARA_PUBLIC_KEY') or ''
 
 Company = env['res.company']
 Currency = env['res.currency']
@@ -16,13 +9,11 @@ CurrencyRate = env['res.currency.rate']
 Country = env['res.country']
 ProductTemplate = env['product.template']
 Pricelist = env['product.pricelist']
-Provider = env['payment.provider']
 Website = env['website']
 Settings = env['res.config.settings']
 
 company = Company.browse(env.company.id)
 sa = Country.search([('code', '=', 'SA')], limit=1)
-ae = Country.search([('code', '=', 'AE')], limit=1)
 if not sa:
     raise Exception('SA country is missing from the database.')
 
@@ -48,9 +39,8 @@ for code in DEMO_RATES_PER_SAR:
 
 sar, aed, usd = currencies['SAR'], currencies['AED'], currencies['USD']
 
-# Company / website defaults for a KSA ecommerce demo.
 company_vals = {
-    'name': company.name if company.name and company.name != 'My Company' else 'Tamara Demo Store',
+    'name': company.name if company.name and company.name != 'My Company' else 'Demo Store',
     'country_id': sa.id,
 }
 company.write(company_vals)
@@ -148,7 +138,7 @@ if not existing:
     demos = [
         {'name': 'Desert Linen Shirt', 'list_price': 350.0},
         {'name': 'City Weekend Bag', 'list_price': 520.0},
-        {'name': 'Tamara Demo Sneakers', 'list_price': 420.0},
+        {'name': 'Canvas Sneakers', 'list_price': 420.0},
     ]
     for vals in demos:
         product = ProductTemplate.create({
@@ -163,39 +153,8 @@ if not existing:
             f'@ {product.list_price} {company_currency.name}'
         )
 
-# Enable Tamara in sandbox mode with demo credentials.
-# Tamara APIs support SAR/AED (and other GCC), not USD — USD stays shoppable via pricelist only.
-website = env['website'].get_current_website()
-provider = Provider.search([
-    ('code', '=', 'tamara'),
-    ('company_id', '=', website.company_id.id),
-], limit=1) or Provider.search([('code', '=', 'tamara')], limit=1)
-if not provider:
-    raise Exception('payment_tamara provider record was not found. Is the module installed?')
-
-tamara_countries = sa
-if ae:
-    tamara_countries |= ae
-
-provider.write({
-    'company_id': website.company_id.id,
-    'tamara_state': 'sandbox',
-    'state': 'test',
-    'tamara_sandbox_mode': True,
-    'is_published': True,
-    'tamara_sandbox_api_token': api_token,
-    'tamara_sandbox_notification_key': notification_token,
-    'tamara_sandbox_public_key': public_key,
-    'available_currency_ids': [Command.set((sar + aed).ids)],
-    'available_country_ids': [Command.set(tamara_countries.ids)],
-})
-
-
 env.cr.commit()
-print('Tamara provider configured.')
+print('Demo store configured.')
 print(f'  company currency: {company_currency.name}')
-print(f'  shop currencies: SAR, AED, USD (Tamara checkout: SAR + AED only)')
+print('  shop currencies: SAR, AED, USD')
 print(f'  FX vs {company_currency.name}: {demo_rates}')
-print(f'  state={provider.state} sandbox={provider.tamara_sandbox_mode}')
-print(f'  public_key={provider.tamara_sandbox_public_key}')
-print(f'  webhook_id={provider.tamara_sandbox_webhook_id or "(pending / registration skipped)"}')

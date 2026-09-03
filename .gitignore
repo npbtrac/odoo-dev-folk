@@ -8,6 +8,7 @@ _build/
 !.github
 !.mailmap
 !.weblate.json
+!.env.example
 # compiled python files
 *.py[co]
 __pycache__/
@@ -24,6 +25,7 @@ odoo/filestore
 odoo/addons/base/maintenance
 # windows installation config file
 /odoo.conf
+/odoo.demo.conf
 
 # generated for windows installer?
 install/win32/*.bat
