@@ -227,11 +227,15 @@ ensure_venv() {
 }
 
 write_odoo_conf() {
-  local expected password_line
+  local expected password_line proxy_line=""
   if [[ -n "$DB_PASSWORD" ]]; then
     password_line="db_password = ${DB_PASSWORD}"
   else
     password_line="db_password = False"
+  fi
+  # Enable proxy_mode when a public HTTPS URL is configured (Cloudflare / TLS proxy).
+  if public_url_needs_proxy_mode "$(resolve_public_base_url)"; then
+    proxy_line=$'\nproxy_mode = True'
   fi
   expected="$(cat <<EOF
 [options]
@@ -242,7 +246,7 @@ db_user = ${DB_USER}
 ${password_line}
 addons_path = ${ADDONS_PATH}
 http_port = ${HTTP_EXPOSING_PORT}
-list_db = True
+list_db = True${proxy_line}
 EOF
 )"
   if [[ -f "$ODOO_CONF" ]] && [[ "$(cat "$ODOO_CONF")" == "$expected" ]]; then

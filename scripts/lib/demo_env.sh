@@ -78,12 +78,12 @@ PID_FILE="${PID_FILE:-$RUN_DIR/odoo.pid}"
 LOG_FILE="${LOG_FILE:-$RUN_DIR/odoo.log}"
 PYTHON="${VENV_DIR}/bin/python"
 ODOO_BIN="$ROOT_DIR/odoo-bin"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
 NGROK_URL="${NGROK_URL:-}"
 NGROK_ENABLED="${NGROK_ENABLED:-0}"
 NGROK_PID_FILE="${NGROK_PID_FILE:-$RUN_DIR/ngrok.pid}"
 NGROK_LOG_FILE="${NGROK_LOG_FILE:-$RUN_DIR/ngrok.log}"
 NGROK_API_URL="${NGROK_API_URL:-http://127.0.0.1:4040/api/tunnels}"
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
 
 sync_db_connection_env() {
   export PGHOST="$DB_HOST"
@@ -108,7 +108,31 @@ normalize_public_url() {
   url="${url%"${url##*[![:space:]]}"}"
   url="${url#"${url%%[![:space:]]*}"}"
   url="${url%/}"
+  # Force HTTPS for non-local public URLs (Cloudflare / reverse-proxy TLS).
+  case "$url" in
+    http://localhost*|http://127.0.0.1*|http://[::1]*) ;;
+    http://*) url="https://${url#http://}" ;;
+  esac
   printf '%s' "$url"
+}
+
+resolve_public_base_url() {
+  # Prefer explicit PUBLIC_BASE_URL, then NGROK_URL, else local HTTP.
+  local url="${PUBLIC_BASE_URL:-}"
+  if [[ -z "$url" && -n "${NGROK_URL:-}" ]]; then
+    url="$NGROK_URL"
+  fi
+  if [[ -z "$url" ]]; then
+    url="http://localhost:${HTTP_EXPOSING_PORT}"
+  fi
+  normalize_public_url "$url"
+}
+
+public_url_needs_proxy_mode() {
+  case "${1:-${PUBLIC_BASE_URL:-}}" in
+    https://*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 ngrok_is_running() {
@@ -182,16 +206,40 @@ start_ngrok() {
 
 sync_odoo_runtime_args() {
   ODOO_RUNTIME_ARGS=(--http-port="$HTTP_EXPOSING_PORT")
-  case "${PUBLIC_BASE_URL:-}" in
-    https://*) ODOO_RUNTIME_ARGS+=(--proxy-mode) ;;
-  esac
+  if public_url_needs_proxy_mode; then
+    ODOO_RUNTIME_ARGS+=(--proxy-mode)
+  fi
+}
+
+ensure_proxy_mode_in_conf() {
+  # Persist proxy_mode in odoo.demo.conf when the public URL is HTTPS so
+  # Cloudflare (or any TLS terminator) X-Forwarded-Proto is trusted.
+  [[ -f "$ODOO_CONF" ]] || return 0
+  public_url_needs_proxy_mode || return 0
+  if grep -Eq '^[[:space:]]*proxy_mode[[:space:]]*=' "$ODOO_CONF"; then
+    if grep -Eq '^[[:space:]]*proxy_mode[[:space:]]*=[[:space:]]*True[[:space:]]*$' "$ODOO_CONF"; then
+      return 0
+    fi
+    # Replace any existing value (False / true / etc.).
+    local tmp
+    tmp="$(mktemp)"
+    sed -E 's/^[[:space:]]*proxy_mode[[:space:]]*=.*/proxy_mode = True/' "$ODOO_CONF" >"$tmp"
+    mv "$tmp" "$ODOO_CONF"
+  else
+    printf '\nproxy_mode = True\n' >>"$ODOO_CONF"
+  fi
+  log "Enabled proxy_mode in ${ODOO_CONF} (HTTPS public URL / reverse proxy)"
 }
 
 apply_public_base_url() {
-  local url="${PUBLIC_BASE_URL:-http://localhost:${HTTP_EXPOSING_PORT}}"
-  url="$(normalize_public_url "$url")"
+  local url
+  url="$(resolve_public_base_url)"
   PUBLIC_BASE_URL="$url"
   log "Setting Odoo public URL to ${url}"
+  if public_url_needs_proxy_mode "$url"; then
+    log "Enabling Odoo proxy_mode for HTTPS / reverse-proxy (Cloudflare) headers"
+  fi
+  ensure_proxy_mode_in_conf
   PUBLIC_BASE_URL="$url" "$PYTHON" "$ODOO_BIN" shell \
     -c "$ODOO_CONF" \
     -d "$DB_NAME" \

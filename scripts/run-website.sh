@@ -37,7 +37,9 @@ Default (no options): start Odoo in the background.
 
 .env:
   HTTP_EXPOSING_PORT, DB_*
-  NGROK_URL       Public HTTPS URL (used as-is if --ngrok is not passed)
+  PUBLIC_BASE_URL Public HTTPS URL (Cloudflare, reverse proxy, etc.)
+                  Sets web.base.url / website domain and enables proxy_mode
+  NGROK_URL       Fallback public URL when PUBLIC_BASE_URL is empty
   NGROK_ENABLED=1 Same as always passing --ngrok
 EOF
 }
@@ -63,9 +65,7 @@ if [[ "$DO_STATUS" -eq 1 ]]; then
   if [[ "$DO_STOP" -eq 1 || "$DO_RESTART" -eq 1 || "$FOREGROUND" -eq 1 ]]; then
     die "Do not combine --status with --stop, --restart, or --foreground."
   fi
-  if [[ -n "$NGROK_URL" ]]; then
-    PUBLIC_BASE_URL="$(normalize_public_url "$NGROK_URL")"
-  fi
+  PUBLIC_BASE_URL="$(resolve_public_base_url)"
   if service_is_running; then
     printf 'Odoo is running (pid %s)\n' "$(cat "$PID_FILE")"
     print_urls
@@ -91,7 +91,10 @@ fi
 
 if [[ "$DO_NGROK" -eq 1 ]]; then
   start_ngrok
-elif [[ -n "$NGROK_URL" ]]; then
+elif [[ -n "${PUBLIC_BASE_URL:-}" ]]; then
+  PUBLIC_BASE_URL="$(normalize_public_url "$PUBLIC_BASE_URL")"
+  log "Using PUBLIC_BASE_URL from .env: ${PUBLIC_BASE_URL}"
+elif [[ -n "${NGROK_URL:-}" ]]; then
   PUBLIC_BASE_URL="$(normalize_public_url "$NGROK_URL")"
   log "Using NGROK_URL from .env: ${PUBLIC_BASE_URL}"
   log "Start ngrok yourself, or re-run with --ngrok (NGROK_ENABLED=1)."
