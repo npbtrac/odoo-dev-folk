@@ -1,5 +1,7 @@
 # Configure the Odoo demo ecommerce store (run via `odoo-bin shell`).
 # Enables a shop currency switcher for SAR, AED, and USD.
+import shutil
+
 from odoo import fields
 from odoo.exceptions import UserError
 
@@ -152,6 +154,21 @@ if not existing:
             f'Created product {product.display_name} '
             f'@ {product.list_price} {company_currency.name}'
         )
+
+# Order confirmation after payment tries to attach a PDF. Without wkhtmltopdf
+# that raises UserError on /payment/status poll and rolls back SO confirmation.
+if not shutil.which('wkhtmltopdf'):
+    for xmlid in (
+        'sale.mail_template_sale_confirmation',
+        'sale.mail_template_sale_payment_executed',
+    ):
+        template = env.ref(xmlid, raise_if_not_found=False)
+        if template and template.report_template_ids:
+            template.report_template_ids = False
+            print(
+                f'Removed PDF report from {xmlid} '
+                '(wkhtmltopdf is not installed; confirmation email stays HTML-only).'
+            )
 
 env.cr.commit()
 print('Demo store configured.')
