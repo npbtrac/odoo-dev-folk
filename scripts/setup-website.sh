@@ -5,6 +5,7 @@
 #
 # Usage:
 #   ./scripts/setup-website.sh
+#   ./scripts/setup-website.sh --force-refresh
 #
 # Afterwards:
 #   ./scripts/run-website.sh                # background
@@ -18,13 +19,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/demo_env.sh"
 
 REQ_STAMP="${VENV_DIR}/.tamara_demo_requirements.sha256"
+FORCE_REFRESH=0
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0")
+Usage: $(basename "$0") [options]
 
 Idempotent demo-store setup (deps, DB, website_sale, SAR/AED/USD pricelists).
 Already-completed steps are skipped automatically.
+
+Options:
+  --force-refresh  Stop Odoo, drop the demo database (and its filestore), then
+                   run a full setup from scratch
+  -h, --help       Show this help
 
 Environment (.env or the shell):
   HTTP_EXPOSING_PORT
@@ -42,13 +49,21 @@ After setup:
 EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
-if [[ $# -gt 0 ]]; then
-  die "Unknown argument: $1 (try --help). Start/stop live in run-website.sh."
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --force-refresh)
+      FORCE_REFRESH=1
+      ;;
+    *)
+      die "Unknown argument: $1 (try --help). Start/stop live in run-website.sh."
+      ;;
+  esac
+  shift
+done
 
 detect_os() {
   case "$(uname -s)" in
@@ -266,6 +281,43 @@ create_database() {
   fi
 }
 
+odoo_filestore_dirs() {
+  # Common Odoo data_dir locations for the demo database filestore.
+  printf '%s\n' \
+    "${HOME}/.local/share/Odoo/filestore/${DB_NAME}" \
+    "${HOME}/Library/Application Support/Odoo/filestore/${DB_NAME}" \
+    "${ROOT_DIR}/.local/share/Odoo/filestore/${DB_NAME}" \
+    "${ROOT_DIR}/filestore/${DB_NAME}"
+}
+
+force_refresh() {
+  log "Force refresh requested for database ${DB_NAME}"
+  stop_odoo
+
+  if psql_demo postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null | grep -q 1; then
+    log "Terminating open connections to ${DB_NAME}"
+    psql_demo postgres -c \
+      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${DB_NAME}' AND pid <> pg_backend_pid();" \
+      >/dev/null 2>&1 || true
+    log "Dropping database ${DB_NAME}"
+    dropdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" --if-exists "$DB_NAME"
+  else
+    log "Database ${DB_NAME} does not exist; nothing to drop"
+  fi
+
+  local dir
+  while IFS= read -r dir; do
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    log "Removing filestore ${dir}"
+    rm -rf "$dir"
+  done < <(odoo_filestore_dirs)
+
+  if [[ -f "$ODOO_CONF" ]]; then
+    log "Removing ${ODOO_CONF} so it is regenerated"
+    rm -f "$ODOO_CONF"
+  fi
+}
+
 module_installed() {
   local name="$1"
   psql_demo "$DB_NAME" -tAc \
@@ -336,6 +388,9 @@ main() {
   fi
   ensure_postgres
   ensure_postgres_db_role
+  if [[ "$FORCE_REFRESH" -eq 1 ]]; then
+    force_refresh
+  fi
   ensure_venv
   write_odoo_conf
   create_database
