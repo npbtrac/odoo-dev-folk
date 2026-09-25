@@ -9,6 +9,7 @@ _build/
 !.mailmap
 !.weblate.json
 !.env.example
+odoo.demo.conf
 # compiled python files
 *.py[co]
 __pycache__/
